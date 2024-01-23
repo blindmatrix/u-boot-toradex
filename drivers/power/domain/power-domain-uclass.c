@@ -13,6 +13,7 @@
 #include <power-domain-uclass.h>
 #include <dm/uclass-internal.h>
 #include <dm/device-internal.h>
+#include <dm/lists.h>
 
 static inline struct power_domain_ops *power_domain_dev_ops(struct udevice *dev)
 {
@@ -75,6 +76,56 @@ int power_domain_lookup_name(const char *name, struct power_domain *power_domain
 
 	printf("%s fail: %s, ret = %d\n", __func__, name, ret);
 	return -EINVAL;
+}
+
+static int power_domain_request(struct power_domain *power_domain,
+        struct udevice *dev_power_domain,
+        struct ofnode_phandle_args *args)
+{
+    struct power_domain_ops *ops = power_domain_dev_ops(dev_power_domain);
+    int ret;
+
+    power_domain->dev = dev_power_domain;
+    if (ops->of_xlate)
+        ret = ops->of_xlate(power_domain, args);
+    else
+        ret = power_domain_of_xlate_default(power_domain, args);
+    if (ret) {
+        debug("of_xlate() failed: %d\n", ret);
+        return ret;
+    }
+
+    ret = ops->request ? ops->request(power_domain) : 0;
+    if (ret) {
+        debug("ops->request() failed: %d\n", ret);
+        return ret;
+    }
+
+    return 0;
+}
+
+int power_domain_get_by_args(struct power_domain *power_domain,
+        struct ofnode_phandle_args *args)
+{
+    struct udevice *pdev;
+    struct udevice *dev = NULL;
+    int ret;
+
+    ret = uclass_get_device_by_ofnode(UCLASS_POWER_DOMAIN, args->node, &dev);
+    if (ret) {
+        /* not device yet */
+        ofnode pnode = ofnode_get_parent(args->node);
+
+        ret = device_find_by_ofnode(pnode, &pdev);
+        if (!ret) {
+            lists_bind_fdt(pdev, args->node, NULL, NULL, false);
+            ret = uclass_get_device_by_ofnode(UCLASS_POWER_DOMAIN,
+                    args->node, &dev);
+        }
+    }
+    if (ret)
+        return ret;
+    return power_domain_request(power_domain, dev, args);
 }
 
 int power_domain_get_by_index(struct udevice *dev,
@@ -144,7 +195,10 @@ int power_domain_on(struct power_domain *power_domain)
 
 	debug("%s(power_domain=%p)\n", __func__, power_domain);
 
-	return ops->on(power_domain);
+	int res = ops->on(power_domain);
+    if (res)
+        printf("power_domain_on failed\n");
+    return res;
 }
 
 int power_domain_off(struct power_domain *power_domain)

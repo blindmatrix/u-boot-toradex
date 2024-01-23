@@ -305,6 +305,20 @@ config CDNS3_USB_PHY
 
 	  This PHY is found on CDNS3 IP devices supporting USB.
 
+config PHY_IMX8MP_LVDS
+    bool "iMX8MP LVDS PHY support"
+    depends on PHY
+    help
+      Enable this to add support for the imx8mp LVDS PHY as found
+      on NXP's i.MX8MP family of SOCs.
+
+config SPL_PHY_IMX8MP_LVDS
+    bool "iMX8MP LVDS PHY support in SPL"
+    depends on PHY
+    help
+      Enable this to add support for the imx8mp LVDS PHY as found
+      on NXP's i.MX8MP family of SOCs in SPL.
+
 source "drivers/phy/rockchip/Kconfig"
 source "drivers/phy/cadence/Kconfig"
 source "drivers/phy/ti/Kconfig"

@@ -242,6 +242,10 @@ int dm_i2c_reg_read(struct udevice *dev, uint offset);
  */
 int dm_i2c_reg_write(struct udevice *dev, uint offset, unsigned int val);
 
+int i2c_probe_chip(struct udevice *bus, uint chip_addr,
+           enum dm_i2c_chip_flags chip_flags);
+int i2c_mux_deselect(struct udevice *dev);
+
 /**
  * dm_i2c_reg_clrset() - Apply bitmask to an I2C register
  *

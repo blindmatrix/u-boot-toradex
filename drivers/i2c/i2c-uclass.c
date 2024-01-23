@@ -271,7 +271,7 @@ int dm_i2c_reg_clrset(struct udevice *dev, uint offset, u32 clr, u32 set)
  * Return: 0 if found, -ENOSYS if the driver is invalid, -EREMOTEIO if the chip
  * does not respond to probe
  */
-static int i2c_probe_chip(struct udevice *bus, uint chip_addr,
+int i2c_probe_chip(struct udevice *bus, uint chip_addr,
 			  enum dm_i2c_chip_flags chip_flags)
 {
 	struct dm_i2c_ops *ops = i2c_get_ops(bus);

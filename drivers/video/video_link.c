@@ -5,7 +5,7 @@
  */
 
 #include <common.h>
-#include <command.h>
+#include <linux/delay.h>
 #include <linux/errno.h>
 
 #include <dm.h>
@@ -13,9 +13,12 @@
 #include <dm/device-internal.h>
 #include <dm/ofnode.h>
 #include <dm/read.h>
+#include <command.h>
+#include <env.h>
+#include <log.h>
 #include <video.h>
 #include <panel.h>
-#include <env.h>
+#include <linux/fb.h>
 
 struct of_endpoint {
 	unsigned int port;
@@ -28,6 +31,7 @@ struct of_endpoint {
 
 struct video_link {
 	struct udevice *link_devs[MAX_LINK_DEVICES];
+	ofnode link_np[MAX_LINK_DEVICES];
 	int dev_num;
 };
 
@@ -36,25 +40,6 @@ struct video_link temp_stack;
 ulong video_links_num = 0;
 ulong curr_video_link = 0;
 bool video_off = false;
-
-ofnode ofnode_get_child_by_name(ofnode parent, const char *name)
-{
-	ofnode child;
-	const char *child_name;
-
-	for (child = ofnode_first_subnode(parent);
-	     ofnode_valid(child);
-	     child = ofnode_next_subnode(child)) {
-
-		child_name = ofnode_get_name(child);
-
-		if (!strncmp(child_name, name, strlen(name))) {
-			break;
-		}
-
-	}
-	return child;
-}
 
 ofnode ofnode_graph_get_next_endpoint(ofnode parent,
 					ofnode prev)
@@ -79,14 +64,20 @@ ofnode ofnode_graph_get_next_endpoint(ofnode parent,
 
 		endpoint = ofnode_first_subnode(port);
 		if (ofnode_valid(endpoint)) {
-			debug("get next endpoint %s\n", ofnode_get_name(endpoint));
+			debug("get next endpoint %s %s %s\n",
+				ofnode_get_name(ofnode_get_parent(ofnode_get_parent(ofnode_get_parent(endpoint)))),
+				ofnode_get_name(ofnode_get_parent(ofnode_get_parent(endpoint))),
+				ofnode_get_name(ofnode_get_parent(endpoint)));
 			return endpoint;
 		}
 	} else {
 		port = ofnode_get_parent(prev);
 		endpoint = ofnode_next_subnode(prev);
 		if (ofnode_valid(endpoint)) {
-			debug("get next endpoint %s\n", ofnode_get_name(endpoint));
+			debug("get next endpoint %s %s %s\n",
+				ofnode_get_name(ofnode_get_parent(ofnode_get_parent(ofnode_get_parent(endpoint)))),
+				ofnode_get_name(ofnode_get_parent(ofnode_get_parent(endpoint))),
+				ofnode_get_name(ofnode_get_parent(endpoint)));
 			return endpoint;
 		}
 	}
@@ -109,7 +100,10 @@ ofnode ofnode_graph_get_next_endpoint(ofnode parent,
 		 */
 		endpoint = ofnode_first_subnode(port);
 		if (ofnode_valid(endpoint)) {
-			debug("get next endpoint %s\n", ofnode_get_name(endpoint));
+			debug("get next endpoint %s %s %s\n",
+				ofnode_get_name(ofnode_get_parent(ofnode_get_parent(ofnode_get_parent(endpoint)))),
+				ofnode_get_name(ofnode_get_parent(ofnode_get_parent(endpoint))),
+				ofnode_get_name(ofnode_get_parent(endpoint)));
 			return endpoint;
 		}
 	}
@@ -159,6 +153,7 @@ ofnode ofnode_graph_get_endpoint_by_regs(
 
 	for_each_endpoint_of_node(parent, node) {
 		ofnode_graph_parse_endpoint(node, &endpoint);
+		debug("%s: %d %d, %d %d\n", __func__, endpoint.port, port_reg, endpoint.id, reg);
 		if (((port_reg == -1) || (endpoint.port == port_reg)) &&
 			((reg == -1) || (endpoint.id == reg))) {
 			debug("get node %s\n", ofnode_get_name(node));
@@ -225,36 +220,76 @@ ofnode ofnode_graph_get_remote_port_parent(ofnode node)
 	return pp;
 }
 
+ofnode ofnode_graph_get_remote_node(ofnode np)
+{
+	ofnode endpoint;
+	ofnode port;
+	ofnode node;
+
+	node = ofnode_find_subnode(np, "ports");
+	if (ofnode_valid(node))
+		np = node;
+
+	port = ofnode_get_child_by_name(np, "port");
+	if (!ofnode_valid(port)) {
+		debug("no port node found in %s\n", ofnode_get_name(np));
+		return ofnode_null();
+	}
+
+	endpoint = ofnode_first_subnode(port);
+	if (ofnode_valid(endpoint)) {
+		debug("get next endpoint %s\n", ofnode_get_name(endpoint));
+		return ofnode_graph_get_remote_port_parent(endpoint);
+	}
+	return ofnode_null();
+}
+
 int find_device_by_ofnode(ofnode node, struct udevice **pdev)
 {
 	int ret;
 
-	if (!ofnode_is_available(node))
+	if (!ofnode_is_available(node)) {
+		debug("-- -2 %s\n", ofnode_get_name(node));
 		return -2;
+	}
 
+	if (!ofnode_read_string(node, "compatible")) {
+		/* go up a level if no compatible */
+		node = ofnode_get_parent(node);
+	}
 	ret = uclass_find_device_by_ofnode(UCLASS_DISPLAY, node, pdev);
-	if (!ret)
+	if (!ret) {
+		debug("--display %s\n", ofnode_get_name(node));
 		return 0;
+	}
 
 	ret = uclass_find_device_by_ofnode(UCLASS_DSI_HOST, node, pdev);
-	if (!ret)
+	if (!ret) {
+		debug("--host %s\n", ofnode_get_name(node));
 		return 0;
+	}
 
 	ret = uclass_find_device_by_ofnode(UCLASS_VIDEO_BRIDGE, node, pdev);
-	if (!ret)
+	if (!ret) {
+		debug("--bridge %s\n", ofnode_get_name(node));
 		return 0;
+	}
 
 	ret = uclass_find_device_by_ofnode(UCLASS_PANEL, node, pdev);
-	if (!ret)
+	if (!ret) {
+		debug("--panel %s\n", ofnode_get_name(node));
 		return 0;
-
+	}
+	debug("-- -1 device of %s\n", ofnode_get_name(node));
 	return -1;
 }
 
-static void video_link_stack_push(struct udevice *dev)
+static void video_link_stack_push(struct udevice *dev, ofnode np)
 {
 	if (temp_stack.dev_num < MAX_LINK_DEVICES) {
+		debug("!!!! add [%d] = dev %s\n", temp_stack.dev_num, dev->name);
 		temp_stack.link_devs[temp_stack.dev_num] = dev;
+		temp_stack.link_np[temp_stack.dev_num] = np;
 		temp_stack.dev_num++;
 	}
 }
@@ -288,14 +323,16 @@ static void video_link_add_node(struct udevice *peer_dev, struct udevice *dev, o
 	struct udevice *remote_dev;
 	bool find = false;
 
-	debug("endpoint cnt %d\n", ofnode_graph_get_endpoint_count(dev_node));
+	debug("endpoint cnt %s, %d\n",  ofnode_get_name(dev_node), ofnode_graph_get_endpoint_count(dev_node));
 
-	video_link_stack_push(dev);
+	video_link_stack_push(dev, dev_node);
 
 	for_each_endpoint_of_node(dev_node, endpoint_node) {
 		remote = ofnode_graph_get_remote_port_parent(endpoint_node);
-		if (!ofnode_valid(remote))
+		if (!ofnode_valid(remote)) {
+			debug("no parent of %s\n", ofnode_get_name(endpoint_node));
 			continue;
+		}
 
 		debug("remote %s\n", ofnode_get_name(remote));
 		ret = find_device_by_ofnode(remote, &remote_dev);
@@ -337,13 +374,16 @@ struct udevice *video_link_get_next_device(struct udevice *curr_dev)
 	for (i = 0; i < video_links[curr_video_link].dev_num; i++) {
 		if (video_links[curr_video_link].link_devs[i] == curr_dev) {
 			if ((i + 1) < video_links[curr_video_link].dev_num) {
-				ret = device_probe(video_links[curr_video_link].link_devs[i + 1]);
+				struct udevice *dev = video_links[curr_video_link].link_devs[i + 1];
+
+				debug("%s: probing %s %s\n", __func__, dev->name, dev->driver->name);
+				ret = device_probe(dev);
 				if (ret) {
 					printf("probe device is failed, ret %d\n", ret);
 					return NULL;
 				}
 
-				return video_links[curr_video_link].link_devs[i + 1];
+				return dev;
 			} else {
 				debug("fail to find next device, already last one\n");
 				return NULL;
@@ -368,7 +408,8 @@ struct udevice *video_link_get_video_device(void)
 
 	ret = device_probe(video_links[curr_video_link].link_devs[0]);
 	if (ret) {
-		printf("probe video device failed, ret %d\n", ret);
+		printf("probe video device failed, %s ret %d\n",
+			video_links[curr_video_link].link_devs[0]->name, ret);
 		return NULL;
 	}
 
@@ -410,9 +451,11 @@ int video_link_get_display_timings(struct display_timing *timings)
 
 			return 0;
 		} else if (device_get_uclass_id(dev) == UCLASS_DISPLAY ||
-			device_get_uclass_id(dev) == UCLASS_VIDEO) {
+			device_get_uclass_id(dev) == UCLASS_VIDEO ||
+			device_get_uclass_id(dev) == UCLASS_VIDEO_BRIDGE) {
+			ofnode np = video_links[curr_video_link].link_np[i];
 
-			ret = ofnode_decode_display_timing(dev_ofnode(dev), 0, timings);
+			ret = ofnode_decode_display_timing(np, 0, timings);
 			if (!ret)
 				return 0;
 		}
@@ -481,14 +524,26 @@ int video_link_init(void)
 	struct udevice *dev;
 	ulong env_id;
 	int off;
+	int ret;
+
 	memset(&video_links, 0, sizeof(video_links));
 	memset(&temp_stack, 0, sizeof(temp_stack));
 
+#ifdef CONFIG_CMD_FBPANEL
+	ret = fbpanel_video_init();
+	if (ret < 0)
+		return -ENODEV;
+#endif
 	for (uclass_find_first_device(UCLASS_VIDEO, &dev);
 	     dev;
 	     uclass_find_next_device(&dev)) {
+		ofnode node = dev_ofnode(dev);
 
-		video_link_add_node(NULL, dev, dev_ofnode(dev));
+		if (ofnode_is_available(node))
+			video_link_add_node(NULL, dev, node);
+		else
+			debug("%s: %s not available\n", __func__,
+				ofnode_get_name(node));
 	}
 
 	if (video_links_num == 0) {
@@ -503,9 +558,15 @@ int video_link_init(void)
 		return 0;
 	}
 
-	env_id = env_get_ulong("video_link", 10, 0);
+	env_id = env_get_ulong("video_link", 10, 10);
 	if (env_id < video_links_num)
 		curr_video_link = env_id;
+	else if (ret == FB_MIPI)
+		curr_video_link = 0;
+	else if (ret == FB_HDMI)
+		curr_video_link = video_links_num - 1;
+	else
+		curr_video_link = (video_links_num > 1) ? 1 : 0;
 
 	list_videolink(true);
 
@@ -516,8 +577,13 @@ int video_link_shut_down(void)
 {
 	struct udevice *video_dev = video_link_get_video_device();
 
-	if (video_dev)
+	if (video_dev) {
+#ifdef CONFIG_VIDEO_BLANK_BEFORE_OFF
+		video_clear(video_dev);
+		mdelay(1);
+#endif
 		device_remove(video_dev, DM_REMOVE_NORMAL);
+	}
 
 	return 0;
 }
