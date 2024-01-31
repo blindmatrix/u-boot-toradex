@@ -197,6 +197,7 @@ void fastboot_acmd_complete(void);
 #endif
 
 int fastboot_tx_write_more(const char *buffer);
+int fastboot_tx_write_more_s(const void *buffer, unsigned int buffer_size);
 
 int fastboot_tx_write(const char *buffer, unsigned int buffer_size);
 
